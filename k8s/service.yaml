@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ev-service
+spec:
+  type: ClusterIP
+  selector:
+    app: ev
+  ports:
+    - port: 80
+      targetPort: 8000
