@@ -1,15 +1,15 @@
 import time
 import uuid
-import joblib
-
-import pandas as pd
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
-from ev.config import settings
+import joblib
+import pandas as pd
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
 from ev import db
+from ev.config import settings
+
 
 class Features(BaseModel):
     model_config = {"extra": "forbid"}
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     yield
     app.state.pipeline = None
 
-app = FastAPI(title="EV", version=1.0, lifespan=lifespan)
+app = FastAPI(title="EV", version="1.0", lifespan=lifespan)
 
 @app.get("/health")
 def health():
@@ -71,7 +71,21 @@ def predict(x: Features, bg: BackgroundTasks):
     score = float(app.state.pipeline.predict_proba(df)[0, 1])
     latency = round(time.perf_counter() - t0, 2) * 1000
 
-    bg.add_task(db.save_prediction, request_id, payload, score, app.state.model_version, latency, status_code=200)
+    bg.add_task(
+        db.save_prediction,
+        request_id,
+        payload,
+        score,
+        app.state.model_version,
+        latency,
+        status_code=200,
+    )
 
     will_buy = score >= app.state.meta["threshold"]
-    return Prediction(score=score, will_buy=will_buy, model_version=app.state.model_version, request_id=request_id, latency=latency)
+    return Prediction(
+        score=score,
+        will_buy=will_buy,
+        model_version=app.state.model_version,
+        request_id=request_id,
+        latency=latency,
+    )
