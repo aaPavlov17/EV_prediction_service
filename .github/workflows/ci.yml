@@ -77,7 +77,7 @@ jobs:
       - name: база
         run: |
           kubectl apply -f k8s/postgres.yaml
-          kubectl rollout status deployment postgres --timeout=180s
+          kubectl rollout status deployment postgres --timeout=500s
 
       - name: сервис
         run: |
@@ -122,3 +122,9 @@ jobs:
           printf '%s\n' "$response" | jq .
           printf '%s\n' "$response" | jq --exit-status \
             '.score | type == "number" and . >= 0 and . <= 1'
+      - name: диагностика
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe deployment ev-service  | tail -20
+          kubectl logs deployment ev-service --tail=30 || true
