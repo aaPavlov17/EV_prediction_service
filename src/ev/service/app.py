@@ -71,7 +71,21 @@ def predict(x: Features, bg: BackgroundTasks):
     score = float(app.state.pipeline.predict_proba(df)[0, 1])
     latency = round(time.perf_counter() - t0, 2) * 1000
 
-    bg.add_task(db.save_prediction, request_id, payload, score, app.state.model_version, latency, status_code=200)
+    bg.add_task(
+        db.save_prediction,
+        request_id,
+        payload,
+        score,
+        app.state.model_version,
+        latency,
+        status_code=200,
+    )
 
     will_buy = score >= app.state.meta["threshold"]
-    return Prediction(score=score, will_buy=will_buy, model_version=app.state.model_version, request_id=request_id, latency=latency)
+    return Prediction(
+        score=score,
+        will_buy=will_buy,
+        model_version=app.state.model_version,
+        request_id=request_id,
+        latency=latency,
+    )
