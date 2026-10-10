@@ -46,3 +46,79 @@ jobs:
           tags: ${{ env.IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write}
+    steps:
+      - uses: actions/checkout@v7
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: helm/kind-action@v1
+        with: {cluster_name: ci}
+      - name: образ в кластере
+        run: |
+          docker pull "$IMAGE"
+          kind load docker-image "$IMAGE" --name ci
+      - name: подтягиваем секреты
+        env:
+          DB_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          kubectl create secret generic ev-secrets \
+            --from-literal=POSTGRES_PASSWORD="$DB_PASSWORD" \
+            --from-literal=DB_URL="postgresql://postgres:$DB_PASSWORD@postgres:5432/ev"
+
+      - name: база
+        run: |
+          kubectl apply -f k8s/postgres.yaml
+          kubectl rollout status deployment postgres --timeout=180s
+
+      - name: сервис
+        run: |
+          kubectl apply -f k8s/
+          kubectl set image deployment/ev-service api="$IMAGE"
+          kubectl rollout status deployment ev-service --timeout=120s
+      - name: smoke
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          kubectl port-forward deployment/ev-service 8000:8000 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
+
+          curl --fail --silent --show-error --max-time 5 \
+            --retry 15 --retry-connrefused --retry-delay 2 --retry-max-time 60 \
+            http://127.0.0.1:8000/health
+          curl --fail --silent --show-error --max-time 5 \
+            http://127.0.0.1:8000/ready
+
+          response=$(curl --fail-with-body --silent --show-error --max-time 30 \
+            --request POST http://127.0.0.1:8000/v1/predict \
+            --header 'Content-Type: application/json' \
+            --data @- <<'JSON'
+          {
+            "Age": 30,
+            "Annual_Income_USD": 60000.0,
+            "Daily_Commute_km": 15.0,
+            "Number_of_Cars_Owned": 1.0,
+            "Charging_Stations_Near_Home": 2.0,
+            "Charging_Stations_Near_Work": 1.0,
+            "Environmental_Concern_Level": 4.0,
+            "Gender": "Male",
+            "City_Type": "Urban",
+            "Current_Car_Type": "Gasoline",
+            "Home_Charging_Possible": "Yes",
+            "Subsidy_Available": "No",
+            "Range_Anxiety_Level": "Medium"
+          }
+          JSON
+          )
+          printf '%s\n' "$response" | jq .
+          printf '%s\n' "$response" | jq --exit-status \
+            '.score | type == "number" and . >= 0 and . <= 1'
