@@ -1,15 +1,15 @@
 import time
 import uuid
-import joblib
-
-import pandas as pd
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
-from ev.config import settings
+import joblib
+import pandas as pd
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
 from ev import db
+from ev.config import settings
+
 
 class Features(BaseModel):
     model_config = {"extra": "forbid"}
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     yield
     app.state.pipeline = None
 
-app = FastAPI(title="EV", version=1.0, lifespan=lifespan)
+app = FastAPI(title="EV", version="1.0", lifespan=lifespan)
 
 @app.get("/health")
 def health():
