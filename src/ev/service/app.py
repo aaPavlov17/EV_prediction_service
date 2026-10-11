@@ -4,8 +4,11 @@ from contextlib import asynccontextmanager
 
 import joblib
 import pandas as pd
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from ev import db
 from ev.config import settings
@@ -51,6 +54,42 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="EV", version="1.0", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def prediction_request_context(request: Request, call_next):
+    if request.method != "POST" or request.url.path != "/v1/predict":
+        return await call_next(request)
+
+    request.state.started_at = time.perf_counter()
+    request.state.request_id = str(uuid.uuid4())
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def log_validation_error(request: Request, exc: RequestValidationError):
+    response = await request_validation_exception_handler(request, exc)
+    if request.method != "POST" or request.url.path != "/v1/predict":
+        return response
+
+    payload = exc.body
+    if isinstance(payload, bytes):
+        payload = {"raw_body": payload.decode("utf-8", errors="replace")}
+    elif isinstance(payload, str):
+        payload = {"raw_body": payload}
+
+    latency = round((time.perf_counter() - request.state.started_at) * 1000, 2)
+    response.background = BackgroundTask(
+        db.save_rejected_prediction,
+        request.state.request_id,
+        payload,
+        request.app.state.model_version,
+        latency,
+    )
+    return response
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model_version": getattr(app.state, "model_version", "unknown")}
@@ -62,14 +101,13 @@ def ready():
     return {"status": "ready"}
 
 @app.post("/v1/predict", status_code=200)
-def predict(x: Features, bg: BackgroundTasks):
-    t0 = time.perf_counter()
-    request_id = str(uuid.uuid4())
+def predict(x: Features, bg: BackgroundTasks, request: Request):
+    request_id = request.state.request_id
     payload = x.model_dump()
     df = pd.DataFrame([payload]).reindex(columns=app.state.meta["features"])
 
     score = float(app.state.pipeline.predict_proba(df)[0, 1])
-    latency = round(time.perf_counter() - t0, 2) * 1000
+    latency = round((time.perf_counter() - request.state.started_at) * 1000, 2)
 
     bg.add_task(
         db.save_prediction,
