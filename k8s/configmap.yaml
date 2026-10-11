@@ -4,4 +4,4 @@ metadata:
   name: ev-config
 data:
   LOG_LEVEL: "INFO"
-  MODEL_PATH: artifacts/model_f.joblib
+  MODEL_PATH: artifacts/model.joblib
